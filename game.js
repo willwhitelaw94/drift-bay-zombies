@@ -194,7 +194,6 @@ function buildLevel(gltf) {
   const buckets = new Map();
   const collide = [];
   const furnitureBoxes = [];
-  const centreXZ = new THREE.Vector2(CENTRE.x, CENTRE.z);
   gltf.scene.traverse((o) => {
     if (o.name.startsWith('F_') && !o.isMesh) furnitureBoxes.push(o);
     if (o.name.startsWith('F_') && o.isMesh && !o.parent.name.startsWith('F_')) furnitureBoxes.push(o);
@@ -212,7 +211,7 @@ function buildLevel(gltf) {
       return;
     }
     if (cat === 'S' || cat === 'E') collide.push(g);
-    if (cat === 'T') collide.push(cropTriangles(g, centreXZ, 165));
+    if (cat === 'T') collide.push(g);
     const key = mname + (cat === 'X' ? '|far' : '');
     if (!buckets.has(key)) buckets.set(key, { name: mname, cat, src: o.material, geos: [] });
     buckets.get(key).geos.push(g);
@@ -258,25 +257,6 @@ function buildLevel(gltf) {
   const collider = new THREE.Mesh(mergeGeometries(posOnly, false));
   collider.updateMatrixWorld(true);
   world.octree.fromGraphNode(collider);
-
-  // Lake, far below, under the Remarkables.
-  const lake = new THREE.Mesh(new THREE.PlaneGeometry(60000, 60000), new THREE.MeshBasicMaterial({ color: 0x06070c, fog: false }));
-  lake.rotation.x = -Math.PI / 2;
-  lake.position.y = -36.4;
-  scene.add(lake);
-}
-
-function cropTriangles(g, c, half) {
-  const p = g.attributes.position, idx = g.index.array, keep = [];
-  for (let i = 0; i < idx.length; i += 3) {
-    const a = idx[i], b = idx[i + 1], d = idx[i + 2];
-    const x = (p.getX(a) + p.getX(b) + p.getX(d)) / 3, z = (p.getZ(a) + p.getZ(b) + p.getZ(d)) / 3;
-    if (Math.abs(x - c.x) < half && Math.abs(z - c.y) < half) keep.push(a, b, d);
-  }
-  const out = new THREE.BufferGeometry();
-  out.setAttribute('position', p);
-  out.setIndex(keep);
-  return out;
 }
 
 // ------------------------------------------------------------------ vegetation
@@ -499,6 +479,14 @@ function nearestWalkable(c) {
   return -1;
 }
 
+// Outside the house grid (down the slope, on the lake) the house flow leads to the nearest edge.
+function playerFlowCell() {
+  const p = player.collider.start, m = GRID.cs * 2;
+  const x = Math.min(Math.max(p.x, GRID.x0 + m), GRID.x0 + GRID.nx * GRID.cs - m);
+  const y = Math.min(Math.max(-p.z, GRID.y0 + m), GRID.y0 + GRID.ny * GRID.cs - m);
+  return nearestWalkable(cellOf(x, -y));
+}
+
 let flowSource = -2;
 function computeFlow(src) {
   flow.fill(-1);
@@ -584,6 +572,7 @@ function drawMinimap() {
   g.translate(W / 2, W / 2);
   g.rotate(player.yaw);
   g.imageSmoothingEnabled = false;
+  if (NZ.minimapUnder) NZ.minimapUnder(g, px, py, s);
   const mx = (GRID.x0 - px) * s, my = -(GRID.y0 + GRID.ny * GRID.cs - py) * s;
   g.drawImage(mini.base, mx, my, GRID.nx * GRID.cs * s, GRID.ny * GRID.cs * s);
   g.fillStyle = '#e0261a';
@@ -739,6 +728,7 @@ function prepareSpawns() {
   spawnCandidates = META.tussock
     .map(([x, y, z]) => ({ x, y, z, c: cellOf(x, -y) }))
     .filter((p) => p.c >= 0 && walk[p.c] && !indoor[p.c] && (p.x < -2 || p.x > 64 || p.y < -6 || p.y > 38));
+  NZ.spawnCandidates = spawnCandidates;
 }
 
 function spawnZombie(forced) {
@@ -747,7 +737,7 @@ function spawnZombie(forced) {
   for (let tries = 0; tries < 40 && !forced; tries++) {
     const c = spawnCandidates[(Math.random() * spawnCandidates.length) | 0];
     const d = Math.hypot(c.x - px, c.y - py);
-    if (d > 12 && d < 34 && flow[c.c] >= 0) {
+    if (d > 12 && d < 34 && (c.c < 0 || flow[c.c] >= 0)) {
       cand = c;
       break;
     }
@@ -817,6 +807,9 @@ function updateZombie(z, dt, t) {
     const n = nextStep(c);
     tx = cellX(n);
     tz = cellZ(n);
+  } else if (z.goal) {
+    tx = z.goal.x;
+    tz = z.goal.z;
   }
   _zd.set(tx - z.pos.x, 0, tz - z.pos.z);
   const want = Math.atan2(_zd.x, _zd.z);
@@ -908,7 +901,7 @@ function respawn(z) {
   for (let tries = 0; tries < 30; tries++) {
     const c = spawnCandidates[(Math.random() * spawnCandidates.length) | 0];
     const d = Math.hypot(c.x - px, c.y - py);
-    if (d > 15 && d < 40 && flow[c.c] >= 0) {
+    if (d > 15 && d < 40 && (c.c < 0 || flow[c.c] >= 0)) {
       z.pos.copy(P(c.x, c.y, c.z));
       z.state = 'rising';
       z.t = 0;
@@ -1427,7 +1420,7 @@ function updateRoom() {
     const d = Math.hypot(r.at[0] - x, r.at[1] - y);
     if (d < bd) { bd = d; best = r; }
   }
-  const name = inside ? (best ? best.name : 'Hallway') : best && bd < 12 ? best.name : bd < 40 ? 'The Garden' : 'The Tussock';
+  const name = (!inside && NZ.placeName?.(x, y)) || (inside ? (best ? best.name : 'Hallway') : best && bd < 12 ? best.name : bd < 40 ? 'The Garden' : 'The Tussock');
   if (name !== roomName) {
     roomName = name;
     $('room-name').textContent = name;
@@ -1665,7 +1658,7 @@ function frame() {
       camera.position.y += Math.abs(Math.sin(player.bob)) * 0.03 * (1 - weapon.adsK);
       camera.rotation.set(player.pitch, player.yaw, player.roll || 0);
     }
-    const pc = nearestWalkable(cellOf(player.collider.start.x, player.collider.start.z));
+    const pc = playerFlowCell();
     if (pc !== flowSource) {
       flowSource = pc;
       computeFlow(pc);
