@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Drift Bay Zombies</title>
+<link rel="icon" href="data:," />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Creepster&family=Oswald:wght@400;600&display=swap" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body class="dark">
+<div id="game"></div>
+
+<div id="hud" hidden>
+  <div id="room"><span id="room-name">Forecourt</span><small>Drift Bay</small></div>
+  <canvas id="minimap" width="220" height="220"></canvas>
+  <div id="scope"><i class="h"></i><i class="v"></i><b></b></div>
+  <div id="crosshair"><i></i><i></i><i></i><i></i></div>
+  <div id="hitmarker"></div>
+  <div id="vignette"></div>
+  <div id="hurt"></div>
+  <div id="round"><svg id="tally" viewBox="0 0 200 120" aria-label="round"></svg><span id="round-num"></span></div>
+  <div id="points-wrap"><div id="floats"></div><div id="points">500</div></div>
+  <div id="ammo"><span id="mag">30</span><span class="sep">|</span><span id="reserve">210</span><div id="weapon-name">Wakatipu Carbine</div></div>
+  <div id="powerups"></div>
+  <div id="message"></div>
+  <div id="hint"></div>
+</div>
+
+<div id="overlay">
+  <div class="panel">
+    <div class="kicker">Drift Bay &middot; Queenstown</div>
+    <h1>Drift Bay<span>Zombies</span></h1>
+    <p id="status">Raising the dead&hellip;</p>
+    <div id="bar"><div id="bar-fill"></div></div>
+    <div id="summary" hidden></div>
+    <button id="play" hidden>Click to play</button>
+    <dl class="controls">
+      <dt>Mouse</dt><dd>look &middot; left fire &middot; right aim</dd>
+      <dt>WASD</dt><dd>move &middot; Shift sprint &middot; Space jump</dd>
+      <dt>R</dt><dd>reload &middot; V knife &middot; Q/E or arrows turn</dd>
+      <dt>1 / 2</dt><dd>carbine / sniper (or mouse wheel) &middot; hold Shift when scoped to steady</dd>
+      <dt>Esc</dt><dd>pause &middot; M minimap</dd>
+    </dl>
+    <p class="fine">Hold out in the house as long as you can. The tussock is full of them.</p>
+  </div>
+</div>
+<script type="module" src="game.js"></script>
+</body>
+</html>
