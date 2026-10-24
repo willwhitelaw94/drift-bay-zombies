@@ -630,7 +630,7 @@ function playerCollisions() {
 
 function updatePlayer(dt) {
   const sprint = keys.ShiftLeft || keys.ShiftRight;
-  const accel = dt * (player.onFloor ? (sprint && !weapon.ads ? 30 : 19) : 5);
+  const accel = dt * (player.onFloor ? (sprint && !weapon.ads ? 30 : 19) : 5) * (player.speedMul ?? 1);
   _fwd.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   _side.set(-_fwd.z, 0, _fwd.x);
   if (keys.KeyW) player.vel.addScaledVector(_fwd, accel);
@@ -638,12 +638,12 @@ function updatePlayer(dt) {
   if (keys.KeyA) player.vel.addScaledVector(_side, -accel);
   if (keys.KeyD) player.vel.addScaledVector(_side, accel);
   if (player.onFloor && keys.Space) {
-    player.vel.y = 7.5;
+    player.vel.y = 7.5 * (player.jumpMul ?? 1);
     keys.Space = false;
   }
-  let damping = Math.exp(-4 * dt) - 1;
+  let damping = Math.exp(-(player.friction ?? 4) * dt) - 1;
   if (!player.onFloor) {
-    player.vel.y -= 28 * dt;
+    player.vel.y -= 28 * dt * (player.gravityMul ?? 1);
     damping *= 0.1;
   }
   player.vel.addScaledVector(player.vel, damping);
@@ -1021,6 +1021,7 @@ function updateDrops(dt, t) {
         for (const k in GUNS) if (k !== weapon.gun) AMMO[k] = { mag: GUNS[k].magSize, reserve: GUNS[k].reserveMax };
         message('MAX AMMO', true);
         sound.say('Max Ammo');
+        NZ.onMaxAmmo?.(); // feature modules refill their own ammo (grenades…)
       } else {
         instaUntil = t + 30;
         message('INSTA-KILL', true);
@@ -1035,17 +1036,23 @@ function updateDrops(dt, t) {
 }
 
 // ------------------------------------------------------------------ weapon
-// Two guns: the carbine you start with and a bolt-action sniper (keys 1/2 or mouse wheel).
+// Keys 1-4 or the mouse wheel. features/weapons.js builds the shotgun + RPG models, their fire()
+// behaviour, and the reload animations (reloadFor/reloadTick) for every gun.
 const GUNS = {
-  carbine: { name: 'Wakatipu Carbine', magSize: 30, reserveMax: 270, rate: 0.095, dmg: 70, reloadTime: 2.1,
-    adsFov: 52, spread: [0.014, 0.03, 0.002], kick: 0.011, pierce: 1, auto: true, scope: false },
+  carbine: { name: 'Wakatipu Carbine', magSize: 30, reserveMax: 270, rate: 0.095, dmg: 70, reloadTime: 2.2,
+    adsFov: 52, spread: [0.014, 0.03, 0.002], kick: 0.011, pierce: 1, auto: true, scope: false, muzzle: [0, 0.032, -0.66] },
   sniper: { name: 'Remarkables .338', magSize: 5, reserveMax: 40, rate: 1.25, dmg: 900, reloadTime: 2.8,
-    adsFov: 9, spread: [0.05, 0.09, 0], kick: 0.05, pierce: 4, auto: false, scope: true },
+    adsFov: 9, spread: [0.05, 0.09, 0], kick: 0.05, pierce: 4, auto: false, scope: true, muzzle: [0, -0.012, -0.72] },
+  shotgun: { name: 'Queenstown Coach Gun', magSize: 6, reserveMax: 48, rate: 0.9, dmg: 150, reloadTime: 2.4,
+    adsFov: 62, spread: [0.07, 0.09, 0.05], kick: 0.05, pierce: 1, auto: false, scope: false, muzzle: [0, 0.038, -0.67] },
+  rpg: { name: 'Lake Wakatipu RPG', magSize: 1, reserveMax: 5, rate: 0.6, dmg: 1400, reloadTime: 3.0,
+    adsFov: 56, spread: [0.004, 0.02, 0], kick: 0.06, pierce: 1, auto: false, scope: false, muzzle: [0, 0.0, -0.7] },
 };
-const AMMO = { carbine: { mag: 30, reserve: 210 }, sniper: { mag: 5, reserve: 25 } };
+const AMMO = { carbine: { mag: 30, reserve: 210 }, sniper: { mag: 5, reserve: 25 }, shotgun: { mag: 6, reserve: 30 }, rpg: { mag: 1, reserve: 5 } };
+const SWAP = 0.5; // weapon switch: lower the old gun for SWAP/2, raise the new one for SWAP/2
 const weapon = {
   gun: 'carbine', ...GUNS.carbine, ...AMMO.carbine, cd: 0, reloading: 0,
-  firing: false, ads: false, adsK: 0, flash: 0, knife: 0, recoil: 0, swap: 0,
+  firing: false, ads: false, adsK: 0, flash: 0, knife: 0, recoil: 0, swap: 0, shown: 'carbine',
 };
 const view = new THREE.Group();
 const muzzle = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTexture(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
@@ -1073,13 +1080,13 @@ function buildViewModel() {
   add(new THREE.CylinderGeometry(0.011, 0.011, 0.32, 10), metal, 0, 0.03, -0.46, Math.PI / 2);
   add(new THREE.CylinderGeometry(0.03, 0.03, 0.025, 12), metal, 0, 0.0, -0.3, Math.PI / 2);
   add(new THREE.CylinderGeometry(0.016, 0.016, 0.03, 10), metal, 0, 0.03, -0.615, Math.PI / 2);
-  add(new THREE.BoxGeometry(0.034, 0.11, 0.065), metal, 0, -0.085, -0.03, 0.08);
+  add(new THREE.BoxGeometry(0.034, 0.11, 0.065), metal, 0, -0.085, -0.03, 0.08).name = 'mag';
   add(new THREE.BoxGeometry(0.006, 0.03, 0.008), metal, 0, 0.052, -0.6);
   add(new THREE.BoxGeometry(0.005, 0.016, 0.01), metal, -0.01, 0.06, 0.07);
   add(new THREE.BoxGeometry(0.005, 0.016, 0.01), metal, 0.01, 0.06, 0.07);
-  add(new THREE.BoxGeometry(0.012, 0.02, 0.05), metal, 0.026, 0.035, 0.02);
-  add(new THREE.BoxGeometry(0.07, 0.06, 0.1), glove, -0.012, -0.05, -0.24, 0.15, 0, 0.15);
-  add(new THREE.BoxGeometry(0.08, 0.08, 0.34), sleeve, -0.07, -0.11, -0.08, 0.32, -0.45, 0);
+  add(new THREE.BoxGeometry(0.012, 0.02, 0.05), metal, 0.026, 0.035, 0.02).name = 'charge';
+  add(new THREE.BoxGeometry(0.07, 0.06, 0.1), glove, -0.012, -0.05, -0.24, 0.15, 0, 0.15).name = 'offhand';
+  add(new THREE.BoxGeometry(0.08, 0.08, 0.34), sleeve, -0.07, -0.11, -0.08, 0.32, -0.45, 0).name = 'offhand';
   add(new THREE.BoxGeometry(0.06, 0.07, 0.09), glove, 0.012, -0.075, 0.1, -0.3);
   add(new THREE.BoxGeometry(0.085, 0.085, 0.3), sleeve, 0.05, -0.12, 0.26, -0.35, 0.15, 0);
   carbineParts.push(...view.children);
@@ -1107,6 +1114,8 @@ function buildViewModel() {
 
 const carbineParts = [], sniperParts = [];
 const sniperGroup = new THREE.Group();
+const gunModels = (NZ.gunModels = { carbine: carbineParts, sniper: sniperParts }); // gun -> view-model objects
+NZ.muzzle = muzzle;
 
 function buildSniperModel(metal, wood, glove, sleeve) {
   // A long bolt-action with a big scope and a dark synthetic stock.
@@ -1134,26 +1143,27 @@ function buildSniperModel(metal, wood, glove, sleeve) {
   add(new THREE.CylinderGeometry(0.032, 0.026, 0.06, 16), metal, 0, 0.1, 0.15, Math.PI / 2);
   add(new THREE.BoxGeometry(0.016, 0.05, 0.02), metal, 0, 0.065, -0.07);
   add(new THREE.BoxGeometry(0.016, 0.05, 0.02), metal, 0, 0.065, 0.06);
-  add(new THREE.CylinderGeometry(0.008, 0.008, 0.06, 8), metal, 0.045, 0.035, 0.07, 0, 0, Math.PI / 2);
-  add(new THREE.SphereGeometry(0.013, 8, 8), metal, 0.075, 0.035, 0.07);
-  add(new THREE.BoxGeometry(0.07, 0.06, 0.1), glove, -0.012, -0.05, -0.26, 0.15, 0, 0.15);
-  add(new THREE.BoxGeometry(0.08, 0.08, 0.34), sleeve, -0.07, -0.11, -0.1, 0.32, -0.45, 0);
+  add(new THREE.CylinderGeometry(0.008, 0.008, 0.06, 8), metal, 0.045, 0.035, 0.07, 0, 0, Math.PI / 2).name = 'bolt';
+  add(new THREE.SphereGeometry(0.013, 8, 8), metal, 0.075, 0.035, 0.07).name = 'bolt';
+  add(new THREE.BoxGeometry(0.07, 0.06, 0.1), glove, -0.012, -0.05, -0.26, 0.15, 0, 0.15).name = 'offhand';
+  add(new THREE.BoxGeometry(0.08, 0.08, 0.34), sleeve, -0.07, -0.11, -0.1, 0.32, -0.45, 0).name = 'offhand';
   add(new THREE.BoxGeometry(0.06, 0.07, 0.09), glove, 0.012, -0.08, 0.1, -0.3);
   add(new THREE.BoxGeometry(0.085, 0.085, 0.3), sleeve, 0.05, -0.125, 0.26, -0.35, 0.15, 0);
 }
 
 function showGun(name) {
-  for (const p of carbineParts) p.visible = name === 'carbine';
-  for (const p of sniperParts) p.visible = name === 'sniper';
-  muzzle.position.set(0, 0.032, name === 'sniper' ? -0.98 : -0.66);
+  weapon.shown = name;
+  for (const k in gunModels) for (const p of gunModels[k]) p.visible = k === name;
+  muzzle.position.fromArray(GUNS[name].muzzle);
 }
 
 function switchGun(name) {
-  if (name === weapon.gun || weapon.reloading > 0 || weapon.knife > 0) return;
+  if (name === weapon.gun || !GUNS[name] || weapon.knife > 0) return;
   AMMO[weapon.gun] = { mag: weapon.mag, reserve: weapon.reserve };
-  Object.assign(weapon, GUNS[name], AMMO[name], { gun: name, cd: 0.45, swap: 0.45, firing: false });
-  showGun(name);
-  sound.reload();
+  // Switching cancels a reload. Re-targeting mid-swap keeps the gun's current height.
+  const swap = weapon.swap > SWAP / 2 ? weapon.swap : SWAP - weapon.swap;
+  Object.assign(weapon, GUNS[name], AMMO[name], { gun: name, cd: swap, swap, reloading: 0, firing: false });
+  NZ.weaponFx?.switched(name);
   $('weapon-name').textContent = weapon.name;
   updateAmmoHud();
 }
@@ -1211,7 +1221,6 @@ function fire(t) {
       damageZombie(z, weapon.dmg * (head ? 3 : 1), head, false, h.point);
       if (done.size >= weapon.pierce) break;
     }
-    if (done.size > 1) message(done.size + ' FOR 1', false);
   } else if (wall) {
     sparks(wall.position);
     dust(wall.position, 3);
@@ -1219,7 +1228,7 @@ function fire(t) {
   player.pitch = Math.min(1.45, player.pitch + (weapon.ads ? weapon.kick * 0.55 : weapon.kick));
   player.yaw += (Math.random() - 0.5) * 0.006;
   updateAmmoHud();
-  if (weapon.mag === 0 && weapon.reserve > 0) setTimeout(() => startReload(), 180);
+  if (weapon.mag === 0) weapon.cd = Math.min(weapon.cd, 0.18); // no bolt cycle on the last round: straight into the reload
 }
 
 function damageZombie(z, dmg, head, knife, point) {
@@ -1237,6 +1246,7 @@ function damageZombie(z, dmg, head, knife, point) {
 }
 
 function knife() {
+  if (NZ.melee) return NZ.melee(); // the gore module's machete replaces the knife
   if (weapon.knife > 0 || weapon.reloading > 0) return;
   weapon.knife = 0.45;
   sound.knife();
@@ -1262,23 +1272,34 @@ function knife() {
 }
 
 function startReload() {
-  if (weapon.reloading > 0 || weapon.mag === weapon.magSize || weapon.reserve <= 0) return;
+  if (weapon.reloading > 0 || weapon.mag >= weapon.magSize || weapon.reserve <= 0 || weapon.swap > 0 || weapon.knife > 0) return;
+  const g = GUNS[weapon.gun];
+  weapon.reloadTime = g.reloadFor ? g.reloadFor() : g.reloadTime;
   weapon.reloading = weapon.reloadTime;
-  sound.reload();
+  if (NZ.weaponFx) NZ.weaponFx.reload(weapon.gun);
+  else sound.reload();
 }
 
 function updateWeapon(dt, t) {
   weapon.cd -= dt;
   weapon.knife = Math.max(0, weapon.knife - dt);
+  // Pulling the trigger interrupts a shell-by-shell reload once there's a round to fire.
+  const reloadTick = GUNS[weapon.gun].reloadTick;
+  if (weapon.reloading > 0 && reloadTick && weapon.firing && weapon.mag > 0) {
+    weapon.reloading = 0;
+    weapon.cd = Math.max(weapon.cd, 0.12);
+  }
   if (weapon.reloading > 0) {
     weapon.reloading -= dt;
-    if (weapon.reloading <= 0) {
+    if (reloadTick) reloadTick(weapon.reloadTime - weapon.reloading); // loads as it goes
+    else if (weapon.reloading <= 0) {
       const take = Math.min(weapon.magSize - weapon.mag, weapon.reserve);
       weapon.mag += take;
       weapon.reserve -= take;
       updateAmmoHud();
     }
   } else if (weapon.firing && weapon.cd <= 0 && weapon.knife <= 0) fire(t);
+  else if (weapon.mag === 0 && weapon.reserve > 0 && weapon.cd <= 0 && weapon.swap <= 0) startReload(); // auto-reload
   weapon.adsK += ((weapon.ads && weapon.reloading <= 0 && weapon.swap <= 0 ? 1 : 0) - weapon.adsK) * Math.min(1, dt * (weapon.scope ? 9 : 14));
   weapon.swap = Math.max(0, weapon.swap - dt);
   const scoped = weapon.scope && weapon.adsK > 0.85;
@@ -1305,19 +1326,16 @@ function updateWeapon(dt, t) {
   weapon.recoil = Math.max(0, weapon.recoil - dt * 9);
   view.position.z += weapon.recoil * 0.045;
   view.rotation.x = weapon.recoil * 0.08;
-  if (weapon.reloading > 0) {
-    const k = 1 - weapon.reloading / weapon.reloadTime, dip = Math.sin(Math.min(1, k) * Math.PI);
-    view.rotation.x = -0.6 * dip;
-    view.rotation.z = 0.5 * dip;
-    view.position.y -= 0.12 * dip;
-  } else view.rotation.z = 0;
-  if (weapon.swap > 0) view.position.y -= Math.sin((weapon.swap / 0.45) * Math.PI) * 0.2;
-  if (weapon.gun === 'sniper' && weapon.cd > 0.3 && weapon.mag > 0) {
-    // Work the bolt between shots.
-    const b = Math.sin(((weapon.rate - weapon.cd) / (weapon.rate - 0.3)) * Math.PI);
-    view.rotation.z = 0.25 * b;
-    view.position.y -= 0.04 * b;
+  view.rotation.y = view.rotation.z = 0;
+  // Switch: drop and tip the old gun out of view, swap models at the bottom, raise the new one.
+  if (weapon.swap <= SWAP / 2 && weapon.shown !== weapon.gun) showGun(weapon.gun);
+  if (weapon.swap > 0) {
+    const s = Math.sin((weapon.swap / SWAP) * Math.PI), e = s * s * (3 - 2 * s);
+    view.position.y -= 0.26 * e;
+    view.rotation.x -= 0.9 * e;
+    view.rotation.z += 0.35 * e;
   }
+  NZ.weaponFx?.pose(dt, t); // reload / pump / bolt animations (features/weapons.js)
   const kk = weapon.knife > 0 ? Math.sin((1 - weapon.knife / 0.45) * Math.PI) : 0;
   knifeMesh.visible = kk > 0;
   knifeMesh.position.set(0.05 - 0.05 * kk, -0.15 + 0.05 * kk, -0.3 - 0.3 * kk);
@@ -1482,7 +1500,7 @@ function begin() {
 }
 
 function lockPointer() {
-  if (freeLook) return;
+  if (freeLook || NZ.touch) return; // touch devices look by dragging, no pointer lock
   try {
     const p = renderer.domElement.requestPointerLock();
     if (p && p.catch) p.catch(() => enterFreeLook());
@@ -1546,10 +1564,10 @@ function updateRound(dt) {
     return;
   }
   ROUND.spawnT -= dt;
-  if (ROUND.toSpawn > 0 && alive < 24 && ROUND.spawnT <= 0 && spawnCandidates.length) {
+  if (ROUND.toSpawn > 0 && alive < 24 + (NZ.pressure?.maxAliveBonus || 0) && ROUND.spawnT <= 0 && spawnCandidates.length) {
     spawnZombie();
     ROUND.toSpawn--;
-    ROUND.spawnT = Math.max(0.5, 2.2 - ROUND.n * 0.15) * (0.6 + Math.random() * 0.8);
+    ROUND.spawnT = Math.max(0.5, 2.2 - ROUND.n * 0.15) * (0.6 + Math.random() * 0.8) * (NZ.pressure?.spawnMul ?? 1);
   }
   if (ROUND.toSpawn === 0 && alive === 0) {
     ROUND.active = false;
@@ -1568,6 +1586,8 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') startReload();
   if (e.code === 'Digit1') switchGun('carbine');
   if (e.code === 'Digit2') switchGun('sniper');
+  if (e.code === 'Digit3') switchGun('shotgun');
+  if (e.code === 'Digit4') switchGun('rpg');
   if (e.code === 'KeyV' || e.code === 'KeyF') knife();
   if (e.code === 'KeyM') mini.canvas.classList.toggle('off');
   if (e.code === 'Escape' || e.code === 'KeyP') pause();
@@ -1601,8 +1621,12 @@ document.addEventListener('mouseup', (e) => {
   if (e.button === 2) weapon.ads = false;
 });
 document.addEventListener('contextmenu', (e) => e.preventDefault());
+let wheelT = 0;
 document.addEventListener('wheel', (e) => {
-  if (state === 'playing') switchGun(weapon.gun === 'carbine' ? 'sniper' : 'carbine');
+  if (state !== 'playing' || !e.deltaY || performance.now() - wheelT < 160) return;
+  wheelT = performance.now();
+  const order = Object.keys(GUNS), i = order.indexOf(weapon.gun);
+  switchGun(order[(i + (e.deltaY > 0 ? 1 : order.length - 1)) % order.length]);
 }, { passive: true });
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement !== renderer.domElement && state === 'playing' && !freeLook) pause();
@@ -1735,7 +1759,7 @@ window.__game = {
 };
 
 // Everything feature modules may use. Getters for values that are reassigned.
-Object.assign(NZ, {
+Object.defineProperties(NZ, Object.getOwnPropertyDescriptors({
   THREE, V3, P, $, META, ROOMS, CENTRE, SPAWN, Octree, Capsule, mergeGeometries,
   renderer, scene, camera, wscene, wcam, view, world, sound, keys, player, weapon, GUNS, AMMO, ROUND, stats, zombies, drops,
   makeZombie, spawnZombie, killZombie, damageZombie, refreshHitMeshes, damagePlayer, addPoints, message, hint, hitmark,
@@ -1744,4 +1768,4 @@ Object.assign(NZ, {
   get state() { return state; }, get hitMeshes() { return hitMeshes; }, get flow() { return flow; },
   get walk() { return walk; }, get grid() { return GRID; }, get instaUntil() { return instaUntil; },
   set instaUntil(v) { instaUntil = v; }, get god() { return god; },
-});
+}));
